@@ -5,10 +5,10 @@
 
 /* Map index 0: packet counter, index 1: threshold. */
 #ifndef __uint
-#define __uint(name, val) int name __attribute__((unused))
+#define __uint(name, val) int (*name)[val]
 #endif
 #ifndef __type
-#define __type(name, val) typeof(val) *name __attribute__((unused))
+#define __type(name, val) typeof(val) *name
 #endif
 
 struct {
