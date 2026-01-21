@@ -16,6 +16,13 @@ CONTROLLER := controller/controller.py
 
 DOCKER_IMAGE ?= neva-p4c
 
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+SYS_INCLUDES :=
+ifeq ($(UNAME_S),Linux)
+SYS_INCLUDES := -I/usr/include -I/usr/include/$(UNAME_M)-linux-gnu
+endif
+
 SUDO :=
 ifeq ($(shell id -u),0)
 SUDO :=
@@ -29,16 +36,20 @@ build:
 	@mkdir -p $(EBPF_BUILD_DIR)
 	@if command -v $(P4C) >/dev/null 2>&1; then \
 		echo "[build] Using p4c-ebpf to generate eBPF C"; \
-		$(P4C) -o $(EBPF_GEN_C) $(P4_SRC); \
-		if [ ! -f $(EBPF_GEN_H) ]; then \
-			echo "[build] Warning: $(EBPF_GEN_H) not generated; using fallback header"; \
-			cp ebpf/src/main.h $(EBPF_GEN_H); \
+		if $(P4C) -o $(EBPF_GEN_C) $(P4_SRC); then \
+			if [ ! -f $(EBPF_GEN_H) ]; then \
+				echo "[build] Warning: $(EBPF_GEN_H) not generated; using fallback header"; \
+				cp ebpf/src/main.h $(EBPF_GEN_H); \
+			fi; \
+			$(CLANG) -O2 -g -target bpf -c $(EBPF_GEN_C) -o $(OBJ) \
+				-I ebpf/src -I $(EBPF_BUILD_DIR) $(SYS_INCLUDES) -include $(EBPF_CONGESTION); \
+		else \
+			echo "[build] p4c-ebpf failed; falling back to ebpf/src/main.c"; \
+			$(CLANG) -O2 -g -target bpf -c $(EBPF_SRC) -o $(OBJ) -I ebpf/src $(SYS_INCLUDES); \
 		fi; \
-		$(CLANG) -O2 -g -target bpf -c $(EBPF_GEN_C) -o $(OBJ) \
-			-I ebpf/src -I $(EBPF_BUILD_DIR) -include $(EBPF_CONGESTION); \
 	else \
 		echo "[build] p4c-ebpf not found; building from ebpf/src/main.c"; \
-		$(CLANG) -O2 -g -target bpf -c $(EBPF_SRC) -o $(OBJ) -I ebpf/src; \
+		$(CLANG) -O2 -g -target bpf -c $(EBPF_SRC) -o $(OBJ) -I ebpf/src $(SYS_INCLUDES); \
 	fi
 
 attach: $(OBJ)

@@ -31,7 +31,7 @@ RUN git clone --depth 1 https://github.com/p4lang/p4c.git /p4c && \
     git submodule update --init --recursive --depth 1 && \
     mkdir build && cd build && \
     cmake .. -DENABLE_EBPF=ON && \
-    make -j$(nproc) && \
+    make -j2 && \
     make install
 
 # 3. Working directory
