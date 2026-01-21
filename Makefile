@@ -1,0 +1,68 @@
+SHELL := /bin/bash
+
+P4C ?= p4c-ebpf
+CLANG ?= clang
+IFACE ?= lo
+SECTION ?=
+OBJ ?= ebpf/build/main.o
+
+P4_SRC := p4/main.p4
+EBPF_SRC := ebpf/src/main.c
+EBPF_BUILD_DIR := ebpf/build
+EBPF_GEN_C := $(EBPF_BUILD_DIR)/main.c
+EBPF_GEN_H := $(EBPF_BUILD_DIR)/main.h
+EBPF_CONGESTION := ebpf/src/congestion.h
+CONTROLLER := controller/controller.py
+
+DOCKER_IMAGE ?= neva-p4c
+
+SUDO :=
+ifeq ($(shell id -u),0)
+SUDO :=
+else
+SUDO := sudo
+endif
+
+.PHONY: build attach cleanup threshold validate docker-build docker-shell docker-compile
+
+build:
+	@mkdir -p $(EBPF_BUILD_DIR)
+	@if command -v $(P4C) >/dev/null 2>&1; then \
+		echo "[build] Using p4c-ebpf to generate eBPF C"; \
+		$(P4C) -o $(EBPF_GEN_C) $(P4_SRC); \
+		if [ ! -f $(EBPF_GEN_H) ]; then \
+			echo "[build] Warning: $(EBPF_GEN_H) not generated; using fallback header"; \
+			cp ebpf/src/main.h $(EBPF_GEN_H); \
+		fi; \
+		$(CLANG) -O2 -g -target bpf -c $(EBPF_GEN_C) -o $(OBJ) \
+			-I ebpf/src -I $(EBPF_BUILD_DIR) -include $(EBPF_CONGESTION); \
+	else \
+		echo "[build] p4c-ebpf not found; building from ebpf/src/main.c"; \
+		$(CLANG) -O2 -g -target bpf -c $(EBPF_SRC) -o $(OBJ) -I ebpf/src; \
+	fi
+
+attach: $(OBJ)
+	@$(SUDO) IFACE=$(IFACE) SECTION=$(SECTION) OBJ=$(OBJ) scripts/attach_tc.sh
+
+cleanup:
+	@$(SUDO) IFACE=$(IFACE) scripts/cleanup.sh
+
+threshold:
+	@if [ -z "$(VALUE)" ]; then \
+		echo "VALUE is required. Example: make threshold VALUE=1000"; \
+		exit 1; \
+	fi
+	@$(SUDO) python3 $(CONTROLLER) --set-threshold $(VALUE)
+	@$(SUDO) python3 $(CONTROLLER) --get-threshold
+
+validate:
+	@$(SUDO) IFACE=$(IFACE) scripts/validate.sh
+
+docker-build:
+	docker build -t $(DOCKER_IMAGE) -f docker/Dockerfile .
+
+docker-shell:
+	docker run --rm -it -v "$(PWD)":/workspace $(DOCKER_IMAGE) /bin/bash
+
+docker-compile:
+	docker run --rm -v "$(PWD)":/workspace $(DOCKER_IMAGE) make build
