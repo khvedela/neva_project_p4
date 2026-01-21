@@ -1,0 +1,15 @@
+# Build artifacts
+ebpf/build/
+*.o
+*.bc
+*.ll
+
+# Validation artifacts
+results/
+*.pcap
+*.log
+
+# Editor/OS noise
+*.swp
+*~
+.DS_Store
