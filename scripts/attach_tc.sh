@@ -15,6 +15,8 @@ warn() {
     echo "[attach] Warning: $*" >&2
 }
 
+log "iface=$IFACE obj=$OBJ section=${SECTION:-auto} map=$MAP_PATH"
+
 if ! command -v tc >/dev/null 2>&1; then
     echo "[attach] Error: tc not found in PATH" >&2
     exit 1
@@ -25,9 +27,16 @@ if [ ! -f "$OBJ" ]; then
     exit 1
 fi
 
+log "current qdisc:"
+tc qdisc show dev "$IFACE" || true
+log "current ingress filters:"
+tc filter show dev "$IFACE" ingress || true
+
 if ! tc qdisc show dev "$IFACE" | grep -q clsact; then
     log "adding clsact qdisc on $IFACE"
     tc qdisc add dev "$IFACE" clsact 2>/dev/null || true
+else
+    log "clsact already present on $IFACE"
 fi
 
 detect_section() {
@@ -113,5 +122,10 @@ PY
 }
 
 pin_map_if_missing
+
+log "post-attach qdisc:"
+tc qdisc show dev "$IFACE" || true
+log "post-attach ingress filters:"
+tc filter show dev "$IFACE" ingress || true
 
 log "attached"

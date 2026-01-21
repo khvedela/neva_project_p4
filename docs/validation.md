@@ -22,3 +22,16 @@
 - If no drop is observed, lower `DROP_THRESHOLD` or reset the counter.
 - If map access fails, verify you are running as root and that the program is
   attached to the correct interface.
+
+## Charts (optional)
+Generate a summary chart from a results directory:
+
+```
+python3 scripts/plot_results.py --results-dir results/results_YYYYMMDD_HHMMSS
+```
+
+This creates `results/results_YYYYMMDD_HHMMSS/charts/summary.png`. You may need:
+
+```
+pip3 install matplotlib
+```

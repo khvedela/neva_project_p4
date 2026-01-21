@@ -9,6 +9,9 @@ DROP_THRESHOLD=${DROP_THRESHOLD:-1000}
 RESULTS_ROOT=${RESULTS_ROOT:-results}
 MAP_PATH=${CONGESTION_MAP_PATH:-/sys/fs/bpf/tc/globals/congestion_reg}
 CONTROLLER=${CONTROLLER:-controller/controller.py}
+SKIP_TCPDUMP=${SKIP_TCPDUMP:-0}
+TCPDUMP_COUNT=${TCPDUMP_COUNT:-}
+TCPDUMP_SNAPLEN=${TCPDUMP_SNAPLEN:-}
 
 log() {
     echo "[validate] $*"
@@ -40,6 +43,10 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUT_DIR="${RESULTS_ROOT}/results_${TIMESTAMP}"
 mkdir -p "$OUT_DIR"
+
+log "iface=$IFACE server=$SERVER_ADDR duration=$DURATION baseline=$BASELINE_THRESHOLD drop=$DROP_THRESHOLD"
+log "results_dir=$OUT_DIR map=$MAP_PATH"
+log "tcpdump_skip=$SKIP_TCPDUMP tcpdump_count=${TCPDUMP_COUNT:-none} snaplen=${TCPDUMP_SNAPLEN:-default}"
 
 export CONGESTION_MAP_PATH="$MAP_PATH"
 
@@ -99,8 +106,21 @@ record_counts() {
 
 start_tcpdump() {
     local pcap_file="$1"
+    if [ "$SKIP_TCPDUMP" = "1" ]; then
+        warn "tcpdump disabled; creating placeholder $pcap_file"
+        : > "$pcap_file"
+        echo ""
+        return
+    fi
     if have tcpdump; then
-        tcpdump -i "$IFACE" -w "$pcap_file" >/dev/null 2>&1 &
+        local args=(-i "$IFACE" -w "$pcap_file")
+        if [ -n "$TCPDUMP_SNAPLEN" ]; then
+            args+=(-s "$TCPDUMP_SNAPLEN")
+        fi
+        if [ -n "$TCPDUMP_COUNT" ]; then
+            args+=(-c "$TCPDUMP_COUNT")
+        fi
+        tcpdump "${args[@]}" >/dev/null 2>&1 &
         echo $!
     else
         warn "tcpdump not found; creating placeholder $pcap_file"
@@ -146,12 +166,20 @@ run_test() {
     local pidstat_pid=""
 
     tcpdump_pid=$(start_tcpdump "$pcap_file")
+    if [ -n "$tcpdump_pid" ]; then
+        log "tcpdump started (pid $tcpdump_pid)"
+    fi
     pidstat_pid=$(start_pidstat "$cpu_file")
+    if [ -n "$pidstat_pid" ]; then
+        log "pidstat started (pid $pidstat_pid)"
+    fi
 
     iperf3 -s -1 > "$OUT_DIR/${label}_server.txt" 2>&1 &
     local server_pid=$!
+    log "iperf3 server started (pid $server_pid)"
     sleep 1
 
+    log "iperf3 client running for $DURATION seconds"
     if ! iperf3 -c "$SERVER_ADDR" -t "$DURATION" > "$iperf_out" 2>&1; then
         warn "iperf3 client failed for $label"
     fi
@@ -159,6 +187,7 @@ run_test() {
     wait "$server_pid" >/dev/null 2>&1 || true
     stop_bg "$tcpdump_pid"
     stop_bg "$pidstat_pid"
+    log "captures stopped for $label"
 
     record_counts "${label}_after"
 }
