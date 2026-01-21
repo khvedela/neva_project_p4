@@ -5,6 +5,8 @@ CLANG ?= clang
 IFACE ?= lo
 SECTION ?=
 OBJ ?= ebpf/build/main.o
+MAP_PATH ?= /sys/fs/bpf/tc/globals/congestion_reg
+CLEAN_MAP ?= 1
 
 P4_SRC := p4/main.p4
 EBPF_SRC := ebpf/src/main.c
@@ -56,7 +58,7 @@ attach: $(OBJ)
 	@$(SUDO) IFACE=$(IFACE) SECTION=$(SECTION) OBJ=$(OBJ) scripts/attach_tc.sh
 
 cleanup:
-	@$(SUDO) IFACE=$(IFACE) scripts/cleanup.sh
+	@$(SUDO) IFACE=$(IFACE) MAP_PATH=$(MAP_PATH) CLEAN_MAP=$(CLEAN_MAP) scripts/cleanup.sh
 
 threshold:
 	@if [ -z "$(VALUE)" ]; then \

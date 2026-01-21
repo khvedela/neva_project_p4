@@ -10,10 +10,14 @@
 #ifndef __type
 #define __type(name, val) typeof(val) *name
 #endif
+#ifndef LIBBPF_PIN_BY_NAME
+#define LIBBPF_PIN_BY_NAME 1
+#endif
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 2);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
     __type(key, u32);
     __type(value, u32);
 } congestion_reg SEC(".maps");
