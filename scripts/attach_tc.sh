@@ -4,6 +4,8 @@ set -euo pipefail
 IFACE=${IFACE:-lo}
 OBJ=${OBJ:-ebpf/build/main.o}
 SECTION=${SECTION:-}
+MAP_PATH=${MAP_PATH:-/sys/fs/bpf/tc/globals/congestion_reg}
+MAP_NAME=${MAP_NAME:-congestion_reg}
 
 log() {
     echo "[attach] $*"
@@ -70,5 +72,46 @@ if ! tc filter replace dev "$IFACE" ingress pref 1 handle 1 bpf da obj "$OBJ" se
     tc filter del dev "$IFACE" ingress 2>/dev/null || true
     tc filter add dev "$IFACE" ingress pref 1 handle 1 bpf da obj "$OBJ" sec "$SECTION"
 fi
+
+pin_map_if_missing() {
+    if [ -e "$MAP_PATH" ]; then
+        return 0
+    fi
+    if ! command -v bpftool >/dev/null 2>&1; then
+        warn "bpftool not found; cannot pin map"
+        return 0
+    fi
+    local map_id
+    map_id=$(bpftool -j map show 2>/dev/null | python3 - "$MAP_NAME" <<'PY'
+import json
+import sys
+
+name = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.exit(1)
+
+matches = [m for m in data if m.get("name") == name]
+if not matches:
+    sys.exit(1)
+
+matches.sort(key=lambda m: m.get("id", 0))
+print(matches[-1].get("id", ""))
+PY
+)
+    if [ -n "$map_id" ]; then
+        mkdir -p "$(dirname "$MAP_PATH")"
+        if bpftool map pin id "$map_id" "$MAP_PATH" >/dev/null 2>&1; then
+            log "pinned map '$MAP_NAME' at $MAP_PATH"
+        else
+            warn "failed to pin map '$MAP_NAME' (id $map_id)"
+        fi
+    else
+        warn "map '$MAP_NAME' not found for pinning"
+    fi
+}
+
+pin_map_if_missing
 
 log "attached"

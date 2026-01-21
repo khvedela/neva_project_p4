@@ -6,6 +6,7 @@ IFACE ?= lo
 SECTION ?=
 OBJ ?= ebpf/build/main.o
 MAP_PATH ?= /sys/fs/bpf/tc/globals/congestion_reg
+MAP_NAME ?= congestion_reg
 CLEAN_MAP ?= 1
 
 P4_SRC := p4/main.p4
@@ -55,7 +56,7 @@ build:
 	fi
 
 attach: $(OBJ)
-	@$(SUDO) IFACE=$(IFACE) SECTION=$(SECTION) OBJ=$(OBJ) scripts/attach_tc.sh
+	@$(SUDO) IFACE=$(IFACE) SECTION=$(SECTION) OBJ=$(OBJ) MAP_PATH=$(MAP_PATH) MAP_NAME=$(MAP_NAME) scripts/attach_tc.sh
 
 cleanup:
 	@$(SUDO) IFACE=$(IFACE) MAP_PATH=$(MAP_PATH) CLEAN_MAP=$(CLEAN_MAP) scripts/cleanup.sh
@@ -65,11 +66,11 @@ threshold:
 		echo "VALUE is required. Example: make threshold VALUE=1000"; \
 		exit 1; \
 	fi
-	@$(SUDO) python3 $(CONTROLLER) --set-threshold $(VALUE)
-	@$(SUDO) python3 $(CONTROLLER) --get-threshold
+	@$(SUDO) CONGESTION_MAP_PATH=$(MAP_PATH) python3 $(CONTROLLER) --set-threshold $(VALUE)
+	@$(SUDO) CONGESTION_MAP_PATH=$(MAP_PATH) python3 $(CONTROLLER) --get-threshold
 
 validate:
-	@$(SUDO) IFACE=$(IFACE) scripts/validate.sh
+	@$(SUDO) IFACE=$(IFACE) CONGESTION_MAP_PATH=$(MAP_PATH) scripts/validate.sh
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) -f docker/Dockerfile .
