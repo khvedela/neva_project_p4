@@ -3,7 +3,6 @@
 #define BACKENDS_EBPF_RUNTIME_EBPF_KERNEL_H_
 
 #include <stddef.h>  // size_t
-#include <sys/types.h>  // ssize_t
 #include "ebpf_common.h"
 
 /* --- FIX 1 : Définition manuelle des booléens --- */

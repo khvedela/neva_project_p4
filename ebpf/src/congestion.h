@@ -4,12 +4,19 @@
 #include "ebpf_kernel.h"
 
 /* Map index 0: packet counter, index 1: threshold. */
-struct bpf_map_def SEC("maps") congestion_reg = {
-    .type = BPF_MAP_TYPE_ARRAY,
-    .key_size = sizeof(u32),
-    .value_size = sizeof(u32),
-    .max_entries = 2,
-};
+#ifndef __uint
+#define __uint(name, val) int name __attribute__((unused))
+#endif
+#ifndef __type
+#define __type(name, val) typeof(val) *name __attribute__((unused))
+#endif
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 2);
+    __type(key, u32);
+    __type(value, u32);
+} congestion_reg SEC(".maps");
 
 static __attribute__((always_inline)) void check_congestion(u8 *should_drop) {
     u32 key_counter = 0;

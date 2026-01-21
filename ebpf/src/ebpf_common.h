@@ -9,4 +9,9 @@ typedef unsigned long long u64;
 
 #define SEC(NAME) __attribute__((section(NAME), used))
 
+#ifndef __ssize_t_defined
+typedef long ssize_t;
+#define __ssize_t_defined
+#endif
+
 #endif
