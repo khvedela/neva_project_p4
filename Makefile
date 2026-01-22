@@ -8,6 +8,8 @@ OBJ ?= ebpf/build/main.o
 MAP_PATH ?= /sys/fs/bpf/tc/globals/congestion_reg
 MAP_NAME ?= congestion_reg
 CLEAN_MAP ?= 1
+STRICT_MAP ?= 1
+CLEAN_ALL ?= 0
 
 P4_SRC := p4/main.p4
 EBPF_SRC := ebpf/src/main.c
@@ -56,10 +58,10 @@ build:
 	fi
 
 attach: $(OBJ)
-	@$(SUDO) IFACE=$(IFACE) SECTION=$(SECTION) OBJ=$(OBJ) MAP_PATH=$(MAP_PATH) MAP_NAME=$(MAP_NAME) scripts/attach_tc.sh
+	@$(SUDO) IFACE=$(IFACE) SECTION=$(SECTION) OBJ=$(OBJ) MAP_PATH=$(MAP_PATH) MAP_NAME=$(MAP_NAME) CLEAN_MAP=$(CLEAN_MAP) STRICT_MAP=$(STRICT_MAP) scripts/attach_tc.sh
 
 cleanup:
-	@$(SUDO) IFACE=$(IFACE) MAP_PATH=$(MAP_PATH) CLEAN_MAP=$(CLEAN_MAP) scripts/cleanup.sh
+	@$(SUDO) IFACE=$(IFACE) MAP_PATH=$(MAP_PATH) CLEAN_MAP=$(CLEAN_MAP) CLEAN_ALL=$(CLEAN_ALL) scripts/cleanup.sh
 
 threshold:
 	@if [ -z "$(VALUE)" ]; then \
@@ -70,7 +72,7 @@ threshold:
 	@$(SUDO) CONGESTION_MAP_PATH=$(MAP_PATH) python3 $(CONTROLLER) --get-threshold
 
 validate:
-	@$(SUDO) IFACE=$(IFACE) CONGESTION_MAP_PATH=$(MAP_PATH) scripts/validate.sh
+	@$(SUDO) IFACE=$(IFACE) CONGESTION_MAP_PATH=$(MAP_PATH) MAP_NAME=$(MAP_NAME) scripts/validate.sh
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) -f docker/Dockerfile .

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -17,15 +18,15 @@ def to_mbps(value, unit):
     return val / 1_000_000.0
 
 
-def parse_iperf_mbps(path):
+def parse_iperf_text_mbps(path):
     if not path.exists():
         return None
     text = path.read_text(errors="ignore")
-    regex = re.compile(r"([0-9.]+)\\s*([KMG]?)bits/sec")
+    regex = re.compile(r"([0-9.]+)\s*([KMG]?)bits/sec", re.IGNORECASE)
 
     mbps = None
     for line in text.splitlines():
-        if "sender" not in line:
+        if "sender" not in line.lower():
             continue
         match = regex.search(line)
         if match:
@@ -40,10 +41,40 @@ def parse_iperf_mbps(path):
     return mbps
 
 
+def parse_iperf_json_mbps(path):
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+
+    if "error" in data:
+        return None
+
+    end = data.get("end", {})
+    for key in ("sum_sent", "sum_received", "sum"):
+        section = end.get(key, {})
+        if "bits_per_second" in section:
+            return section["bits_per_second"] / 1_000_000.0
+
+    streams = end.get("streams", [])
+    if streams:
+        bps = 0.0
+        for stream in streams:
+            summary = stream.get("sender", {})
+            if "bits_per_second" in summary:
+                bps += summary["bits_per_second"]
+        if bps > 0:
+            return bps / 1_000_000.0
+
+    return None
+
+
 def parse_packet_counts(path):
     if not path.exists():
         return {}
-    regex = re.compile(r"^(\\S+):\\s*counter=(\\d+)\\s+threshold=(\\d+)")
+    regex = re.compile(r"^(\S+):\s*counter=(\d+)\s+threshold=(\d+)")
     counts = {}
     for line in path.read_text(errors="ignore").splitlines():
         match = regex.search(line)
@@ -65,13 +96,45 @@ def find_latest_results(root):
     return candidates[-1] if candidates else None
 
 
-def plot_bar(ax, labels, values, title, ylabel):
-    ax.bar(labels, values, color=["#2c7fb8", "#f03b20"])
+def read_meta(path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def estimate_mbps_from_pcap(pcap_path, duration_sec):
+    if duration_sec <= 0:
+        return None
+    if not pcap_path.exists():
+        return None
+    size_bytes = pcap_path.stat().st_size
+    if size_bytes == 0:
+        return None
+    return (size_bytes * 8.0) / (duration_sec * 1_000_000.0)
+
+
+def plot_bar(ax, labels, values, title, ylabel, notes=None):
+    plot_values = [v if v is not None else 0 for v in values]
+    ax.bar(labels, plot_values, color=["#2c7fb8", "#f03b20"])
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.set_ylim(bottom=0)
+
+    max_val = max(plot_values) if plot_values else 1.0
+    if max_val == 0:
+        max_val = 1.0
+
     for idx, val in enumerate(values):
-        ax.text(idx, val, f"{val:.2f}", ha="center", va="bottom", fontsize=8)
+        if val is None:
+            ax.text(idx, max_val * 0.05, "missing", ha="center", va="bottom", fontsize=8)
+            continue
+        label = f"{val:.2f}"
+        if notes and notes[idx]:
+            label += notes[idx]
+        ax.text(idx, val, label, ha="center", va="bottom", fontsize=8)
 
 
 def main():
@@ -79,6 +142,11 @@ def main():
     parser.add_argument(
         "--results-dir",
         help="Results directory (defaults to latest under results/)",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        help="Override duration seconds for throughput estimation",
     )
     args = parser.parse_args()
 
@@ -93,50 +161,70 @@ def main():
         print("Error: matplotlib not installed. Run: pip3 install matplotlib", file=sys.stderr)
         sys.exit(1)
 
-    baseline_mbps = parse_iperf_mbps(results_dir / "iperf_baseline.txt")
-    drop_mbps = parse_iperf_mbps(results_dir / "iperf_drop.txt")
+    meta = read_meta(results_dir / "meta.json")
+    duration_sec = args.duration or float(meta.get("duration", 0) or 0)
+
+    baseline_json = results_dir / "iperf_baseline.json"
+    drop_json = results_dir / "iperf_drop.json"
+    baseline_txt = results_dir / "iperf_baseline.txt"
+    drop_txt = results_dir / "iperf_drop.txt"
+
+    baseline_mbps = parse_iperf_json_mbps(baseline_json)
+    drop_mbps = parse_iperf_json_mbps(drop_json)
+
+    if baseline_mbps is None:
+        baseline_mbps = parse_iperf_text_mbps(baseline_txt)
+    if drop_mbps is None:
+        drop_mbps = parse_iperf_text_mbps(drop_txt)
+
+    baseline_note = ""
+    drop_note = ""
 
     baseline_pcap = results_dir / "baseline.pcap"
     drop_pcap = results_dir / "drop.pcap"
     baseline_pcap_mb = baseline_pcap.stat().st_size / (1024 * 1024) if baseline_pcap.exists() else None
     drop_pcap_mb = drop_pcap.stat().st_size / (1024 * 1024) if drop_pcap.exists() else None
 
+    if baseline_mbps is None:
+        estimate = estimate_mbps_from_pcap(baseline_pcap, duration_sec)
+        if estimate is not None:
+            baseline_mbps = estimate
+            baseline_note = "*"
+
+    if drop_mbps is None:
+        estimate = estimate_mbps_from_pcap(drop_pcap, duration_sec)
+        if estimate is not None:
+            drop_mbps = estimate
+            drop_note = "*"
+
     counts = parse_packet_counts(results_dir / "packet_counts.txt")
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
-    if baseline_mbps is not None and drop_mbps is not None:
-        plot_bar(
-            axes[0],
-            ["baseline", "drop"],
-            [baseline_mbps, drop_mbps],
-            "Throughput",
-            "Mbps",
-        )
-    else:
-        axes[0].set_title("Throughput")
-        axes[0].text(0.5, 0.5, "missing data", ha="center", va="center")
-        axes[0].set_axis_off()
+    plot_bar(
+        axes[0],
+        ["baseline", "drop"],
+        [baseline_mbps, drop_mbps],
+        "Throughput",
+        "Mbps",
+        [baseline_note, drop_note],
+    )
 
-    if baseline_pcap_mb is not None and drop_pcap_mb is not None:
-        plot_bar(
-            axes[1],
-            ["baseline", "drop"],
-            [baseline_pcap_mb, drop_pcap_mb],
-            "PCAP size",
-            "MB",
-        )
-    else:
-        axes[1].set_title("PCAP size")
-        axes[1].text(0.5, 0.5, "missing data", ha="center", va="center")
-        axes[1].set_axis_off()
+    plot_bar(
+        axes[1],
+        ["baseline", "drop"],
+        [baseline_pcap_mb, drop_pcap_mb],
+        "PCAP size",
+        "MB",
+        [None, None],
+    )
 
     if counts:
         labels = []
         values = []
         for label in ["baseline_before", "baseline_after", "drop_before", "drop_after"]:
             if label in counts:
-                labels.append(label.replace("_", "\\n"))
+                labels.append(label.replace("_", "\n"))
                 values.append(counts[label]["counter"])
         if labels:
             axes[2].bar(labels, values, color="#41ab5d")
@@ -150,6 +238,9 @@ def main():
         axes[2].set_title("Packet counter")
         axes[2].text(0.5, 0.5, "missing data", ha="center", va="center")
         axes[2].set_axis_off()
+
+    if baseline_note == "*" or drop_note == "*":
+        fig.text(0.02, 0.02, "* throughput estimated from pcap size", fontsize=8)
 
     fig.tight_layout()
     charts_dir = results_dir / "charts"
