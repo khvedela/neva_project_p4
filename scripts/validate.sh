@@ -525,6 +525,7 @@ import json
 import os
 import platform
 import time
+import sys
 
 meta = {
     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
