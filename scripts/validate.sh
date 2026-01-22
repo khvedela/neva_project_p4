@@ -12,6 +12,10 @@ CONTROLLER=${CONTROLLER:-controller/controller.py}
 SKIP_TCPDUMP=${SKIP_TCPDUMP:-0}
 TCPDUMP_COUNT=${TCPDUMP_COUNT:-}
 TCPDUMP_SNAPLEN=${TCPDUMP_SNAPLEN:-}
+IPERF_PORT=${IPERF_PORT:-5201}
+IPERF_CONNECT_TIMEOUT_MS=${IPERF_CONNECT_TIMEOUT_MS:-3000}
+IPERF_CLIENT_TIMEOUT=${IPERF_CLIENT_TIMEOUT:-}
+SERVER_WAIT_SECS=${SERVER_WAIT_SECS:-2}
 
 log() {
     echo "[validate] $*"
@@ -47,6 +51,7 @@ mkdir -p "$OUT_DIR"
 log "iface=$IFACE server=$SERVER_ADDR duration=$DURATION baseline=$BASELINE_THRESHOLD drop=$DROP_THRESHOLD"
 log "results_dir=$OUT_DIR map=$MAP_PATH"
 log "tcpdump_skip=$SKIP_TCPDUMP tcpdump_count=${TCPDUMP_COUNT:-none} snaplen=${TCPDUMP_SNAPLEN:-default}"
+log "iperf_port=$IPERF_PORT connect_timeout_ms=$IPERF_CONNECT_TIMEOUT_MS client_timeout=${IPERF_CLIENT_TIMEOUT:-auto}"
 
 export CONGESTION_MAP_PATH="$MAP_PATH"
 
@@ -149,6 +154,41 @@ stop_bg() {
     fi
 }
 
+wait_for_server() {
+    if ! have ss; then
+        return 0
+    fi
+    local attempts
+    attempts=$((SERVER_WAIT_SECS * 5))
+    if [ "$attempts" -lt 1 ]; then
+        attempts=1
+    fi
+    for _ in $(seq 1 "$attempts"); do
+        if ss -ltn "sport = :$IPERF_PORT" | awk 'NR>1 {print $1}' | grep -q LISTEN; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
+run_iperf_client() {
+    local iperf_out="$1"
+    local timeout_cmd=()
+    local client_timeout="${IPERF_CLIENT_TIMEOUT}"
+    if [ -z "$client_timeout" ]; then
+        client_timeout=$((DURATION + 5))
+    fi
+    if have timeout; then
+        timeout_cmd=(timeout "$client_timeout")
+    fi
+    if ! "${timeout_cmd[@]}" iperf3 -c "$SERVER_ADDR" -p "$IPERF_PORT" \
+        -t "$DURATION" --connect-timeout "$IPERF_CONNECT_TIMEOUT_MS" > "$iperf_out" 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
 run_test() {
     local label="$1"
     local threshold="$2"
@@ -174,13 +214,15 @@ run_test() {
         log "pidstat started (pid $pidstat_pid)"
     fi
 
-    iperf3 -s -1 > "$OUT_DIR/${label}_server.txt" 2>&1 &
+    iperf3 -s -1 -p "$IPERF_PORT" > "$OUT_DIR/${label}_server.txt" 2>&1 &
     local server_pid=$!
     log "iperf3 server started (pid $server_pid)"
-    sleep 1
+    if ! wait_for_server; then
+        warn "iperf3 server not listening on port $IPERF_PORT"
+    fi
 
     log "iperf3 client running for $DURATION seconds"
-    if ! iperf3 -c "$SERVER_ADDR" -t "$DURATION" > "$iperf_out" 2>&1; then
+    if ! run_iperf_client "$iperf_out"; then
         warn "iperf3 client failed for $label"
     fi
 
