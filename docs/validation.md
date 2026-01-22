@@ -60,3 +60,12 @@ python3 scripts/plot_timeseries.py --results-dir results/results_YYYYMMDD_HHMMSS
 ```
 
 This creates `results/results_YYYYMMDD_HHMMSS/charts/timeseries.png`.
+
+## Auto-tune (optional)
+To compute a safe drop threshold for the current machine, run:
+
+```
+sudo scripts/auto_tune.sh
+```
+
+It prints a `make validate` command with a tuned `DROP_THRESHOLD`.
