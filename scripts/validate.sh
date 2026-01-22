@@ -20,6 +20,7 @@ TCPDUMP_COUNT=${TCPDUMP_COUNT:-20000}
 TCPDUMP_SNAPLEN=${TCPDUMP_SNAPLEN:-96}
 TCPDUMP_FILTER=${TCPDUMP_FILTER:-}
 SKIP_PIDSTAT=${SKIP_PIDSTAT:-0}
+COUNTER_SAMPLE_SECS=${COUNTER_SAMPLE_SECS:-1}
 IPERF_PORT=${IPERF_PORT:-5201}
 IPERF_PORT_RANGE=${IPERF_PORT_RANGE:-10}
 IPERF_CONNECT_TIMEOUT_MS=${IPERF_CONNECT_TIMEOUT_MS:-3000}
@@ -234,11 +235,13 @@ stop_bg() {
 TCPDUMP_PID=""
 PIDSTAT_PID=""
 SERVER_PID=""
+COUNTER_PID=""
 
 cleanup_on_exit() {
     stop_bg "$TCPDUMP_PID"
     stop_bg "$PIDSTAT_PID"
     stop_bg "$SERVER_PID"
+    stop_bg "$COUNTER_PID"
 }
 trap cleanup_on_exit EXIT INT TERM
 
@@ -368,6 +371,39 @@ start_pidstat() {
         echo "pidstat not available" > "$cpu_file"
         echo ""
     fi
+}
+
+counter_sampling_enabled() {
+    if [ -z "$COUNTER_SAMPLE_SECS" ]; then
+        return 1
+    fi
+    awk "BEGIN {exit !($COUNTER_SAMPLE_SECS > 0)}" >/dev/null 2>&1
+}
+
+start_counter_sampler() {
+    local label="$1"
+    local csv_file="$2"
+    if ! counter_sampling_enabled; then
+        echo ""
+        return
+    fi
+    if [ ! -f "$CONTROLLER" ]; then
+        warn "controller not found; skipping counter sampling"
+        echo ""
+        return
+    fi
+    {
+        echo "timestamp_ms,counter"
+        while true; do
+            ts_ms=$(date +%s%3N)
+            val=$(python3 "$CONTROLLER" --get-counter 2>/dev/null || echo "")
+            if [ -n "$val" ]; then
+                echo "${ts_ms},${val}"
+            fi
+            sleep "$COUNTER_SAMPLE_SECS"
+        done
+    } > "$csv_file" &
+    echo $!
 }
 
 start_iperf_server() {
@@ -542,6 +578,7 @@ meta = {
     "tcpdump_count": os.environ.get("TCPDUMP_COUNT"),
     "tcpdump_snaplen": os.environ.get("TCPDUMP_SNAPLEN"),
     "skip_tcpdump": os.environ.get("SKIP_TCPDUMP"),
+    "counter_sample_secs": os.environ.get("COUNTER_SAMPLE_SECS"),
     "kernel": platform.uname().release,
 }
 
@@ -587,12 +624,18 @@ run_test() {
     fi
 
     info "iperf3 client running for $DURATION seconds"
+    COUNTER_PID=$(start_counter_sampler "$label" "$OUT_DIR/counter_${label}.csv")
+    if [ -n "$COUNTER_PID" ]; then
+        info "counter sampler started (pid $COUNTER_PID)"
+    fi
     if ! run_iperf_client "$iperf_json" "$iperf_txt"; then
         warn "iperf3 client failed for $label"
     fi
 
     stop_bg "$SERVER_PID"
     SERVER_PID=""
+    stop_bg "$COUNTER_PID"
+    COUNTER_PID=""
 
     stop_bg "$TCPDUMP_PID"
     stop_bg "$PIDSTAT_PID"
@@ -630,6 +673,7 @@ info "iface=$IFACE server=$SERVER_ADDR duration=$DURATION baseline=$BASELINE_THR
 info "results_dir=$OUT_DIR map=$MAP_PATH"
 info "log_file=$LOG_FILE system_info=$OUT_DIR/system.txt"
 info "tcpdump_skip=$SKIP_TCPDUMP tcpdump_count=${TCPDUMP_COUNT:-none} snaplen=${TCPDUMP_SNAPLEN:-default}"
+info "counter_sample_secs=${COUNTER_SAMPLE_SECS}"
 info "iperf_port=$IPERF_PORT port_range=$IPERF_PORT_RANGE connect_timeout_ms=$IPERF_CONNECT_TIMEOUT_MS client_timeout=${IPERF_CLIENT_TIMEOUT:-auto}"
 
 export CONGESTION_MAP_PATH="$MAP_PATH"
@@ -668,6 +712,7 @@ fi
 export IFACE SERVER_ADDR DURATION BASELINE_THRESHOLD DROP_THRESHOLD IPERF_PORT
 export MAP_PATH MAP_NAME AUTO_THRESHOLD AUTO_THRESHOLD_FRACTION
 export TCPDUMP_COUNT TCPDUMP_SNAPLEN SKIP_TCPDUMP
+export COUNTER_SAMPLE_SECS
 write_meta
 
 run_test "drop" "$DROP_THRESHOLD" "$OUT_DIR/drop.pcap" \

@@ -49,3 +49,14 @@ This creates `results/results_YYYYMMDD_HHMMSS/charts/summary.png`. You may need:
 ```
 pip3 install matplotlib
 ```
+
+## Time-series charts (optional)
+If `COUNTER_SAMPLE_SECS` is enabled (default `1`), the script writes
+`counter_baseline.csv` and `counter_drop.csv`. You can generate a time-series
+plot with:
+
+```
+python3 scripts/plot_timeseries.py --results-dir results/results_YYYYMMDD_HHMMSS
+```
+
+This creates `results/results_YYYYMMDD_HHMMSS/charts/timeseries.png`.
