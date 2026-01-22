@@ -55,6 +55,36 @@ log "iperf_port=$IPERF_PORT connect_timeout_ms=$IPERF_CONNECT_TIMEOUT_MS client_
 
 export CONGESTION_MAP_PATH="$MAP_PATH"
 
+is_port_listening() {
+    local port="$1"
+    if ! have ss; then
+        return 1
+    fi
+    ss -ltn "sport = :$port" | awk 'NR>1 {print $1}' | grep -q LISTEN
+}
+
+select_iperf_port() {
+    if ! have ss; then
+        return 0
+    fi
+    local start="$IPERF_PORT"
+    local end=$((start + 9))
+    local candidate
+    for candidate in $(seq "$start" "$end"); do
+        if ! is_port_listening "$candidate"; then
+            if [ "$candidate" != "$IPERF_PORT" ]; then
+                warn "port $IPERF_PORT is in use; switching to $candidate"
+                IPERF_PORT="$candidate"
+            fi
+            return 0
+        fi
+    done
+    warn "ports $start-$end are busy; set IPERF_PORT to a free port"
+    return 1
+}
+
+select_iperf_port || exit 1
+
 snapshot_tc() {
     if have tc; then
         {
@@ -217,6 +247,10 @@ run_test() {
     iperf3 -s -1 -p "$IPERF_PORT" > "$OUT_DIR/${label}_server.txt" 2>&1 &
     local server_pid=$!
     log "iperf3 server started (pid $server_pid)"
+    if ! kill -0 "$server_pid" >/dev/null 2>&1; then
+        warn "iperf3 server exited early; see ${label}_server.txt"
+        return
+    fi
     if ! wait_for_server; then
         warn "iperf3 server not listening on port $IPERF_PORT"
     fi
