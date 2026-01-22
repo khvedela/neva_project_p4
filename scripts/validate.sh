@@ -4,8 +4,8 @@ set -euo pipefail
 IFACE=${IFACE:-lo}
 SERVER_ADDR=${SERVER_ADDR:-127.0.0.1}
 DURATION=${DURATION:-10}
-BASELINE_THRESHOLD=${BASELINE_THRESHOLD:-1000000}
-DROP_THRESHOLD=${DROP_THRESHOLD:-1000}
+BASELINE_THRESHOLD=${BASELINE_THRESHOLD:-100000000}
+DROP_THRESHOLD=${DROP_THRESHOLD:-10000000}
 RESULTS_ROOT=${RESULTS_ROOT:-results}
 MAP_PATH=${CONGESTION_MAP_PATH:-/sys/fs/bpf/tc/globals/congestion_reg}
 CONTROLLER=${CONTROLLER:-controller/controller.py}
@@ -139,6 +139,16 @@ record_counts() {
     fi
 }
 
+log_map_state() {
+    local label="$1"
+    local state
+    if state=$(python3 "$CONTROLLER" --get 2>/dev/null); then
+        log "$label map: $state"
+    else
+        warn "failed to read map after $label"
+    fi
+}
+
 start_tcpdump() {
     local pcap_file="$1"
     if [ "$SKIP_TCPDUMP" = "1" ]; then
@@ -228,6 +238,7 @@ run_test() {
 
     log "setting threshold to $threshold for $label"
     python3 "$CONTROLLER" --set-threshold "$threshold" >/dev/null
+    log_map_state "$label"
 
     reset_counter
     record_counts "${label}_before"
